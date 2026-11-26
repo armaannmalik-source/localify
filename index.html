@@ -733,8 +733,28 @@ let songs = [];
 let currentIndex = -1;
 let isShuffle = false;
 let currentView = 'home';
-let favorites = new Set();
+// Favorites are saved in this browser so they remain after refreshes.
+let favorites;
+try {
+  favorites = new Set(JSON.parse(localStorage.getItem('localify_favorites') || '[]'));
+} catch (error) {
+  console.warn('Could not load saved favorites:', error);
+  favorites = new Set();
+}
 let objectUrl = null;
+
+function saveFavorites() {
+  try {
+    localStorage.setItem('localify_favorites', JSON.stringify([...favorites]));
+  } catch (error) {
+    console.error('Could not save favorites:', error);
+  }
+}
+
+// A stable ID is safer than a song's current array position.
+function getSongId(song) {
+  return song.webkitRelativePath || song.name;
+}
 
 function cleanName(name) {
   return name.replace(/\.[^/.]+$/, '');
@@ -780,7 +800,7 @@ function getVisibleSongs() {
       item.song.name.toLowerCase().includes(query);
 
     const matchesView =
-      currentView !== 'favorites' || favorites.has(item.index);
+      currentView !== 'favorites' || favorites.has(getSongId(item.song));
 
     return matchesSearch && matchesView;
   });
@@ -853,16 +873,23 @@ function renderPlaylist() {
     const favoriteCell = document.createElement('td');
     const favoriteBtn = document.createElement('button');
     favoriteBtn.className = 'favorite-btn';
-    favoriteBtn.textContent = favorites.has(index) ? '♥' : '♡';
+    const songId = getSongId(song);
+    favoriteBtn.textContent = favorites.has(songId) ? '♥' : '♡';
 
-    if (favorites.has(index)) favoriteBtn.classList.add('liked');
+    if (favorites.has(songId)) {
+      favoriteBtn.classList.add('liked');
+    }
 
     favoriteBtn.onclick = function(event) {
       event.stopPropagation();
 
-      if (favorites.has(index)) favorites.delete(index);
-      else favorites.add(index);
+      if (favorites.has(songId)) {
+        favorites.delete(songId);
+      } else {
+        favorites.add(songId);
+      }
 
+      saveFavorites();
       renderPlaylist();
     };
 
