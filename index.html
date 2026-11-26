@@ -556,6 +556,21 @@ input[type=file] { display: none; }
 @media(max-width: 380px) {
   .quick-cards { grid-template-columns: 1fr; }
 }
+
+/* Localify 2.2 audio equalizer */
+.eq-panel{display:none;background:rgba(0,0,0,.30);border:1px solid #383838;border-radius:10px;padding:16px;margin:0 0 22px}
+.eq-panel.open{display:block}.eq-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.eq-head h3{font-size:16px}.eq-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.eq-tools select,.eq-tools button{background:#252525;color:#eee;border:1px solid #444;border-radius:18px;padding:8px 11px;font-size:12px}
+.eq-tools button.active{border-color:var(--green);color:var(--green)}
+.eq-bands{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px}
+.eq-band{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.eq-band input{width:100%;accent-color:var(--green)}.eq-band label{font-size:11px;color:#ccc}.eq-value{font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums}
+.eq-note{font-size:11px;color:var(--muted);margin-top:12px;line-height:1.5}
+.eq-toggle{border:1px solid #444;background:transparent;color:#aaa;border-radius:18px;padding:7px 10px;font-size:11px}
+.eq-toggle.active{color:var(--green);border-color:var(--green)}
+@media(max-width:750px){.eq-panel{padding:12px;margin-bottom:16px}.eq-bands{gap:7px}.eq-band label{font-size:10px}.eq-head h3{font-size:14px}}
+
 </style>
 <script src="https://cdn.jsdelivr.net/npm/jsmediatags@3.9.7/dist/jsmediatags.min.js"></script>
 </head>
@@ -629,6 +644,27 @@ input[type=file] { display: none; }
       <select id="playlistSelect" aria-label="Choose playlist" style="background:#222;color:white;border:1px solid #444;border-radius:20px;padding:9px 12px;max-width:100%"></select>
     </div>
 
+    <section class="eq-panel" id="eqPanel" aria-label="Audio equalizer">
+      <div class="eq-head">
+        <h3>♫ Audio Equalizer</h3>
+        <div class="eq-tools">
+          <select id="eqPreset" aria-label="Equalizer preset">
+            <option value="flat">Flat</option><option value="bass">Bass Boost</option><option value="rock">Rock</option><option value="pop">Pop</option><option value="classical">Classical</option><option value="custom">Custom</option>
+          </select>
+          <button id="eqPowerBtn" type="button" aria-pressed="false">Enable EQ</button>
+          <button id="eqResetBtn" type="button">Reset</button>
+        </div>
+      </div>
+      <div class="eq-bands" id="eqBands">
+        <div class="eq-band"><label for="eq60">60 Hz</label><input id="eq60" type="range" min="-12" max="12" step="1" value="0"><span class="eq-value" id="eq60Value">0 dB</span></div>
+        <div class="eq-band"><label for="eq230">230 Hz</label><input id="eq230" type="range" min="-12" max="12" step="1" value="0"><span class="eq-value" id="eq230Value">0 dB</span></div>
+        <div class="eq-band"><label for="eq910">910 Hz</label><input id="eq910" type="range" min="-12" max="12" step="1" value="0"><span class="eq-value" id="eq910Value">0 dB</span></div>
+        <div class="eq-band"><label for="eq3600">3.6 kHz</label><input id="eq3600" type="range" min="-12" max="12" step="1" value="0"><span class="eq-value" id="eq3600Value">0 dB</span></div>
+        <div class="eq-band"><label for="eq14000">14 kHz</label><input id="eq14000" type="range" min="-12" max="12" step="1" value="0"><span class="eq-value" id="eq14000Value">0 dB</span></div>
+      </div>
+      <p class="eq-note" id="eqStatus">Equalizer is off. Enable it to shape the sound. Audio processing starts after you press Enable EQ.</p>
+    </section>
+
     <section class="queue-panel" id="queuePanel" aria-label="Playback queue">
       <div class="queue-panel-head"><h3>♫ Up Next <span id="queueCount" style="color:#aaa;font-size:12px;font-weight:400">(0)</span></h3>
         <div class="queue-actions"><button class="queue-action" id="clearQueueBtn">Clear queue</button></div></div>
@@ -672,6 +708,7 @@ input[type=file] { display: none; }
         <button class="play-btn" id="playPauseBtn">▶</button>
         <button class="ctrl" id="nextBtn" title="Next">⏭</button>
         <button class="queue-toggle" id="queueToggleBtn" title="Show playback queue" aria-expanded="false">☷ Queue</button>
+        <button class="eq-toggle" id="eqToggleBtn" title="Open audio equalizer" aria-expanded="false">♫ EQ</button>
       </div>
 
       <div class="progress">
@@ -1221,8 +1258,120 @@ shuffleBtn.onclick = function() {
   shuffleBtn.classList.toggle('active', isShuffle);
 };
 
+// ========================================
+// AUDIO EQUALIZER (Web Audio API)
+// ========================================
+const eqPanel = document.getElementById('eqPanel');
+const eqToggleBtn = document.getElementById('eqToggleBtn');
+const eqPowerBtn = document.getElementById('eqPowerBtn');
+const eqPreset = document.getElementById('eqPreset');
+const eqResetBtn = document.getElementById('eqResetBtn');
+const eqStatus = document.getElementById('eqStatus');
+const eqFrequencies = [60, 230, 910, 3600, 14000];
+const eqIds = ['eq60', 'eq230', 'eq910', 'eq3600', 'eq14000'];
+const eqPresets = {
+  flat: [0, 0, 0, 0, 0],
+  bass: [8, 6, 1, 0, 1],
+  rock: [5, 3, -2, 4, 6],
+  pop: [-1, 2, 5, 3, -1],
+  classical: [4, 2, -1, 3, 5]
+};
+let eqContext = null;
+let eqSource = null;
+let eqFilters = [];
+let eqEnabled = false;
+let eqValues = [0, 0, 0, 0, 0];
+try {
+  const savedEQ = JSON.parse(localStorage.getItem('localify_equalizer') || '{}');
+  if (Array.isArray(savedEQ.values) && savedEQ.values.length === 5) eqValues = savedEQ.values.map(v => Math.max(-12, Math.min(12, Number(v) || 0)));
+  eqEnabled = savedEQ.enabled === true;
+} catch (error) { console.warn('Could not load equalizer settings:', error); }
+function saveEQSettings() {
+  try { localStorage.setItem('localify_equalizer', JSON.stringify({values: eqValues, enabled: eqEnabled})); }
+  catch (error) { console.warn('Could not save equalizer settings:', error); }
+}
+function updateEQLabels() {
+  eqIds.forEach((id, i) => {
+    document.getElementById(id).value = eqValues[i];
+    document.getElementById(id + 'Value').textContent = (eqValues[i] > 0 ? '+' : '') + eqValues[i] + ' dB';
+  });
+}
+function applyEQValues() {
+  eqFilters.forEach((filter, i) => { filter.gain.value = eqEnabled ? eqValues[i] : 0; });
+}
+async function enableEqualizer() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) {
+    eqStatus.textContent = 'Your browser does not support the Web Audio API. The player will continue working normally.';
+    return false;
+  }
+  try {
+    if (!eqContext) {
+      eqContext = new AudioContextClass();
+      eqSource = eqContext.createMediaElementSource(audio);
+      eqFilters = eqFrequencies.map((frequency, i) => {
+        const filter = eqContext.createBiquadFilter();
+        filter.type = i === 0 ? 'lowshelf' : i === 4 ? 'highshelf' : 'peaking';
+        filter.frequency.value = frequency;
+        if (filter.type === 'peaking') filter.Q.value = 1;
+        filter.gain.value = 0;
+        return filter;
+      });
+      eqSource.connect(eqFilters[0]);
+      eqFilters.forEach((filter, i) => filter.connect(eqFilters[i + 1] || eqContext.destination));
+    }
+    if (eqContext.state === 'suspended') await eqContext.resume();
+    applyEQValues();
+    eqStatus.textContent = eqEnabled ? 'Equalizer enabled. Changes are saved in this browser.' : 'Equalizer is off.';
+    return true;
+  } catch (error) {
+    console.error('Equalizer could not start:', error);
+    eqStatus.textContent = 'Could not start the equalizer in this browser. Audio playback remains available.';
+    return false;
+  }
+}
+function setEQEnabled(enabled) {
+  eqEnabled = enabled;
+  if (enabled) {
+    enableEqualizer().then(ok => {
+      if (!ok) { eqEnabled = false; eqPowerBtn.textContent = 'Enable EQ'; eqPowerBtn.classList.remove('active'); eqPowerBtn.setAttribute('aria-pressed', 'false'); saveEQSettings(); return; }
+      eqPowerBtn.textContent = 'EQ On'; eqPowerBtn.classList.add('active'); eqPowerBtn.setAttribute('aria-pressed', 'true');
+      eqStatus.textContent = 'Equalizer enabled. Changes are saved in this browser.';
+    });
+  } else {
+    applyEQValues();
+    eqPowerBtn.textContent = 'Enable EQ'; eqPowerBtn.classList.remove('active'); eqPowerBtn.setAttribute('aria-pressed', 'false');
+    eqStatus.textContent = 'Equalizer is off. Your settings are saved.';
+  }
+  saveEQSettings();
+}
+function chooseEQPreset(name) {
+  if (name === 'custom') return;
+  eqValues = [...(eqPresets[name] || eqPresets.flat)];
+  updateEQLabels(); applyEQValues(); saveEQSettings();
+}
+eqToggleBtn.addEventListener('click', () => {
+  const open = eqPanel.classList.toggle('open');
+  eqToggleBtn.classList.toggle('active', open);
+  eqToggleBtn.setAttribute('aria-expanded', String(open));
+});
+eqPowerBtn.addEventListener('click', () => setEQEnabled(!eqEnabled));
+eqPreset.addEventListener('change', () => chooseEQPreset(eqPreset.value));
+eqResetBtn.addEventListener('click', () => { eqPreset.value = 'flat'; chooseEQPreset('flat'); });
+eqIds.forEach((id, i) => document.getElementById(id).addEventListener('input', event => {
+  eqValues[i] = Number(event.target.value);
+  eqPreset.value = 'custom';
+  updateEQLabels(); applyEQValues(); saveEQSettings();
+}));
+updateEQLabels();
+eqPowerBtn.textContent = eqEnabled ? 'EQ On' : 'Enable EQ';
+eqPowerBtn.classList.toggle('active', eqEnabled);
+eqPowerBtn.setAttribute('aria-pressed', String(eqEnabled));
+if (eqEnabled) eqStatus.textContent = 'Equalizer is saved as enabled. Press EQ On if audio processing has not started yet.';
+audio.addEventListener('play', () => { if (eqEnabled && !eqContext) enableEqualizer(); });
+
 // Progress bar
-audio.addEventListener('timeupdate', function() {
+ audio.addEventListener('timeupdate', function() {
   if (!audio.duration) return;
 
   seekBar.value = (audio.currentTime / audio.duration) * 100;
