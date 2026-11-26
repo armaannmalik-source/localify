@@ -492,8 +492,8 @@ input[type=file] { display: none; }
   .section-heading h2 { font-size: 19px; }
 
   .song-row td { padding: 10px 5px; }
-  .song-row td:last-child { display: none; }
-  .song-list th:last-child { display: none; }
+  .song-row td:nth-last-child(-n+2) { display: none; }
+  .song-list th:nth-last-child(-n+2) { display: none; }
 
   .player {
     grid-column: 1;
@@ -562,6 +562,9 @@ input[type=file] { display: none; }
       <button class="nav-button" data-view="favorites">
         <span class="nav-icon">♥</span> Favorites
       </button>
+      <button class="nav-button" data-view="playlists">
+        <span class="nav-icon">▤</span> Playlists
+      </button>
     </div>
 
     <div class="sidebar-bottom">
@@ -604,6 +607,12 @@ input[type=file] { display: none; }
       <h2 id="listHeading">Your Songs</h2>
       <span id="trackCount">0 songs</span>
     </div>
+    <div id="playlistTools" style="display:none;gap:8px;flex-wrap:wrap;margin:-5px 0 18px">
+      <button class="upload-btn" id="createPlaylistBtn">＋ Create playlist</button>
+      <button class="nav-button" id="renamePlaylistBtn" style="width:auto">Rename</button>
+      <button class="nav-button" id="deletePlaylistBtn" style="width:auto">Delete</button>
+      <select id="playlistSelect" aria-label="Choose playlist" style="background:#222;color:white;border:1px solid #444;border-radius:20px;padding:9px 12px;max-width:100%"></select>
+    </div>
 
     <table class="song-list">
       <thead>
@@ -612,6 +621,7 @@ input[type=file] { display: none; }
           <th>SONG</th>
           <th>FOLDER</th>
           <th>♥</th>
+          <th>＋</th>
         </tr>
       </thead>
       <tbody id="trackList"></tbody>
@@ -659,6 +669,7 @@ input[type=file] { display: none; }
     <button class="active" data-view="home"><span>⌂</span>Home</button>
     <button data-view="library"><span>♫</span>Library</button>
     <button data-view="favorites"><span>♥</span>Favorites</button>
+    <button data-view="playlists"><span>▤</span>Playlists</button>
   </nav>
 
 </div>
@@ -742,6 +753,24 @@ try {
   favorites = new Set();
 }
 let objectUrl = null;
+let selectedPlaylistId = null;
+let playlists = [];
+try {
+  playlists = JSON.parse(localStorage.getItem('localify_playlists') || '[]');
+  if (!Array.isArray(playlists)) playlists = [];
+} catch (error) {
+  console.warn('Could not load playlists:', error);
+  playlists = [];
+}
+
+function savePlaylists() {
+  try {
+    localStorage.setItem('localify_playlists', JSON.stringify(playlists));
+  } catch (error) {
+    alert('Could not save playlists. Your browser storage may be full.');
+    console.error(error);
+  }
+}
 
 function saveFavorites() {
   try {
@@ -799,8 +828,13 @@ function getVisibleSongs() {
     const matchesSearch =
       item.song.name.toLowerCase().includes(query);
 
-    const matchesView =
-      currentView !== 'favorites' || favorites.has(getSongId(item.song));
+    let matchesView = true;
+    if (currentView === 'favorites') {
+      matchesView = favorites.has(getSongId(item.song));
+    } else if (currentView === 'playlists') {
+      const playlist = playlists.find(p => p.id === selectedPlaylistId);
+      matchesView = !!playlist && playlist.songIds.includes(getSongId(item.song));
+    }
 
     return matchesSearch && matchesView;
   });
@@ -820,12 +854,14 @@ function renderPlaylist() {
 
   if (songs.length > 0 && visibleSongs.length === 0) {
     emptyState.querySelector('h3').textContent =
-      currentView === 'favorites' ? 'No favorites yet' : 'No songs found';
+      currentView === 'favorites' ? 'No favorites yet' : currentView === 'playlists' ? 'No songs in this playlist' : 'No songs found';
 
     emptyState.querySelector('p').textContent =
       currentView === 'favorites'
         ? 'Tap the heart beside a song to add it to Favorites.'
-        : 'Try a different search.';
+        : currentView === 'playlists'
+          ? 'Use Add to playlist beside a song to add tracks.'
+          : 'Try a different search.';
   } else {
     emptyState.querySelector('h3').textContent = 'Your music starts here';
     emptyState.querySelector('p').innerHTML =
@@ -895,7 +931,39 @@ function renderPlaylist() {
 
     favoriteCell.appendChild(favoriteBtn);
 
-    tr.append(number, infoCell, folderCell, favoriteCell);
+    const playlistCell = document.createElement('td');
+    const addPlaylistBtn = document.createElement('button');
+    addPlaylistBtn.className = 'favorite-btn';
+    addPlaylistBtn.textContent = currentView === 'playlists' ? '−' : '＋';
+    addPlaylistBtn.title = currentView === 'playlists' ? 'Remove from this playlist' : 'Add to playlist';
+    addPlaylistBtn.onclick = function(event) {
+      event.stopPropagation();
+      if (currentView === 'playlists') {
+        const activePlaylist = playlists.find(p => p.id === selectedPlaylistId);
+        if (activePlaylist) {
+          activePlaylist.songIds = activePlaylist.songIds.filter(id => id !== songId);
+          savePlaylists();
+          renderPlaylist();
+        }
+        return;
+      }
+      if (!playlists.length) {
+        alert('Create a playlist first using the Playlists section.');
+        return;
+      }
+      const choices = playlists.map((p, i) => `${i + 1}. ${p.name}`).join('\n');
+      const answer = prompt('Add to which playlist? Enter its number:\n' + choices);
+      if (answer === null) return;
+      const chosen = playlists[Number(answer) - 1];
+      if (!chosen) { alert('That playlist number is not valid.'); return; }
+      if (!chosen.songIds.includes(songId)) chosen.songIds.push(songId);
+      savePlaylists();
+      if (currentView === 'playlists') renderPlaylist();
+      alert('Added to ' + chosen.name);
+    };
+    playlistCell.appendChild(addPlaylistBtn);
+
+    tr.append(number, infoCell, folderCell, favoriteCell, playlistCell);
 
     tr.onclick = () => loadSong(index, true);
 
@@ -1021,13 +1089,31 @@ function formatTime(seconds) {
 searchInput.addEventListener('input', renderPlaylist);
 
 // Navigation
+function refreshPlaylistSelect() {
+  const select = document.getElementById('playlistSelect');
+  select.innerHTML = '';
+  playlists.forEach(playlist => {
+    const option = document.createElement('option');
+    option.value = playlist.id;
+    option.textContent = playlist.name;
+    select.appendChild(option);
+  });
+  if (selectedPlaylistId && playlists.some(p => p.id === selectedPlaylistId)) {
+    select.value = selectedPlaylistId;
+  } else if (playlists.length) {
+    selectedPlaylistId = playlists[0].id;
+    select.value = selectedPlaylistId;
+  } else {
+    selectedPlaylistId = null;
+  }
+}
+
 function changeView(view) {
   currentView = view;
-
   document.querySelectorAll('[data-view]').forEach(button => {
     button.classList.toggle('active', button.dataset.view === view);
   });
-
+  document.getElementById('playlistTools').style.display = view === 'playlists' ? 'flex' : 'none';
   if (view === 'home') {
     pageTitle.textContent = 'Welcome to Localify';
     pageSubtitle.textContent = 'Your personal music space.';
@@ -1038,20 +1124,60 @@ function changeView(view) {
     pageSubtitle.textContent = 'All your music in one place.';
     listHeading.textContent = 'All Songs';
     quickCards.style.display = 'none';
-  } else {
+  } else if (view === 'favorites') {
     pageTitle.textContent = 'Your Favorites';
     pageSubtitle.textContent = 'The songs you love.';
     listHeading.textContent = 'Favorite Songs';
     quickCards.style.display = 'none';
+  } else {
+    pageTitle.textContent = 'Your Playlists';
+    pageSubtitle.textContent = 'Your collections, saved in this browser.';
+    listHeading.textContent = 'Playlist Songs';
+    quickCards.style.display = 'none';
+    refreshPlaylistSelect();
   }
-
   renderPlaylist();
 }
+
+function createPlaylist() {
+  const name = prompt('Enter a name for your new playlist:');
+  if (!name || !name.trim()) return;
+  const playlist = { id: 'pl-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), name: name.trim(), songIds: [] };
+  playlists.push(playlist);
+  selectedPlaylistId = playlist.id;
+  savePlaylists();
+  refreshPlaylistSelect();
+  changeView('playlists');
+}
+
+document.getElementById('createPlaylistBtn').addEventListener('click', createPlaylist);
+document.getElementById('playlistSelect').addEventListener('change', event => {
+  selectedPlaylistId = event.target.value;
+  renderPlaylist();
+});
+document.getElementById('renamePlaylistBtn').addEventListener('click', () => {
+  const playlist = playlists.find(p => p.id === selectedPlaylistId);
+  if (!playlist) { alert('Create a playlist first.'); return; }
+  const name = prompt('Rename playlist:', playlist.name);
+  if (!name || !name.trim()) return;
+  playlist.name = name.trim();
+  savePlaylists();
+  refreshPlaylistSelect();
+});
+document.getElementById('deletePlaylistBtn').addEventListener('click', () => {
+  const playlist = playlists.find(p => p.id === selectedPlaylistId);
+  if (!playlist) { alert('Select a playlist first.'); return; }
+  if (!confirm('Delete playlist "' + playlist.name + '"? Your music files will not be deleted.')) return;
+  playlists = playlists.filter(p => p.id !== selectedPlaylistId);
+  selectedPlaylistId = playlists[0]?.id || null;
+  savePlaylists();
+  refreshPlaylistSelect();
+  renderPlaylist();
+});
 
 document.querySelectorAll('[data-view]').forEach(button => {
   button.addEventListener('click', () => changeView(button.dataset.view));
 });
-
 document.getElementById('allMusicCard').onclick = () => changeView('library');
 document.getElementById('favoritesCard').onclick = () => changeView('favorites');
 
