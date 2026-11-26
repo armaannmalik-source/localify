@@ -278,7 +278,9 @@ input[type=file] { display: none; }
   place-items: center;
   font-size: 19px;
   flex-shrink: 0;
+  overflow: hidden;
 }
+.song-art img, .player-art img { width:100%; height:100%; object-fit:cover; display:block; }
 
 .song-name {
   overflow: hidden;
@@ -359,6 +361,7 @@ input[type=file] { display: none; }
   display: grid;
   place-items: center;
   font-size: 23px;
+  overflow:hidden;
 }
 
 .track-details { min-width: 0; }
@@ -543,6 +546,7 @@ input[type=file] { display: none; }
   .quick-cards { grid-template-columns: 1fr; }
 }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/jsmediatags@3.9.7/dist/jsmediatags.min.js"></script>
 </head>
 
 <body>
@@ -637,7 +641,7 @@ input[type=file] { display: none; }
 
   <footer class="player">
     <div class="now-playing">
-      <div class="player-art">♫</div>
+      <div class="player-art" id="playerArt">♫</div>
       <div class="track-details">
         <div class="track-title" id="currentTitle">Not Playing</div>
         <div class="track-folder" id="currentFolder">Choose some music</div>
@@ -795,6 +799,80 @@ function getFolder(song) {
   return parts.length > 1 ? parts.slice(0, -1).join('/') : 'Local Music';
 }
 
+// Embedded album-art cache (IndexedDB keeps image blobs out of localStorage).
+const artworkCache = new Map();
+let artworkDBPromise;
+function openArtworkDB() {
+  if (!('indexedDB' in window)) return Promise.resolve(null);
+  if (!artworkDBPromise) artworkDBPromise = new Promise(resolve => {
+    const request = indexedDB.open('LocalifyMedia', 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains('artwork')) request.result.createObjectStore('artwork');
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => resolve(null);
+  });
+  return artworkDBPromise;
+}
+async function getCachedArtwork(id) {
+  if (artworkCache.has(id)) return artworkCache.get(id);
+  const db = await openArtworkDB();
+  if (!db) return null;
+  return new Promise(resolve => {
+    const request = db.transaction('artwork', 'readonly').objectStore('artwork').get(id);
+    request.onsuccess = () => {
+      const blob = request.result || null;
+      const url = blob ? URL.createObjectURL(blob) : null;
+      artworkCache.set(id, url);
+      resolve(url);
+    };
+    request.onerror = () => resolve(null);
+  });
+}
+async function saveCachedArtwork(id, blob) {
+  const db = await openArtworkDB();
+  if (!db) return;
+  try { db.transaction('artwork', 'readwrite').objectStore('artwork').put(blob, id); } catch (e) { console.warn('Artwork cache unavailable', e); }
+}
+function readArtwork(file) {
+  return new Promise(resolve => {
+    if (!window.jsmediatags || !/\.(mp3|flac|m4a|ogg)$/i.test(file.name)) return resolve(null);
+    window.jsmediatags.read(file, {
+      onSuccess: result => {
+        const picture = result.tags && result.tags.picture;
+        if (!picture || !picture.data) return resolve(null);
+        try {
+          const blob = new Blob([new Uint8Array(picture.data)], {type: picture.format || 'image/jpeg'});
+          resolve(blob);
+        } catch (e) { resolve(null); }
+      },
+      onError: () => resolve(null)
+    });
+  });
+}
+async function setArtworkForSong(song, target) {
+  const id = getSongId(song);
+  let url = await getCachedArtwork(id);
+  if (!url) {
+    const blob = await readArtwork(song);
+    if (blob) {
+      url = URL.createObjectURL(blob);
+      artworkCache.set(id, url);
+      await saveCachedArtwork(id, blob);
+    }
+  }
+  if (!target || !target.isConnected) return;
+  target.replaceChildren();
+  if (url) {
+    const img = document.createElement('img');
+    img.src = url;
+    img.alt = 'Album artwork';
+    target.appendChild(img);
+  } else {
+    target.textContent = '♫';
+  }
+}
+
 // Load selected music folder
 folderInput.addEventListener('change', function(e) {
   const files = Array.from(e.target.files);
@@ -885,6 +963,7 @@ function renderPlaylist() {
     const art = document.createElement('div');
     art.className = 'song-art';
     art.textContent = '♫';
+    setArtworkForSong(song, art);
 
     const details = document.createElement('div');
     details.style.minWidth = '0';
@@ -985,6 +1064,9 @@ function loadSong(index, autoPlay) {
 
   currentTitle.textContent = cleanName(song.name);
   currentFolder.textContent = getFolder(song);
+  const playerArt = document.getElementById('playerArt');
+  playerArt.textContent = '♫';
+  setArtworkForSong(song, playerArt);
 
   renderPlaylist();
 
