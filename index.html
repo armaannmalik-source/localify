@@ -310,6 +310,17 @@ input[type=file] { display: none; }
 
 .favorite-btn.liked { color: var(--green); }
 
+
+.queue-panel{display:none;background:rgba(0,0,0,.28);border:1px solid #383838;border-radius:10px;padding:16px;margin:18px 0 22px}
+.queue-panel.open{display:block}.queue-panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.queue-panel-head h3{font-size:16px}.queue-actions{display:flex;gap:6px;flex-wrap:wrap}
+.queue-action{border:1px solid #444;background:#252525;color:#eee;border-radius:18px;padding:7px 10px;font-size:11px}
+.queue-action:hover{border-color:var(--green);color:var(--green)}.queue-item{display:flex;align-items:center;gap:10px;padding:9px 2px;border-top:1px solid rgba(255,255,255,.07);min-width:0}
+.queue-item-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+.queue-item-sub{color:var(--muted);font-size:10px;margin-top:3px}.queue-empty{color:var(--muted);font-size:12px;padding:12px 2px}
+.queue-toggle{border:1px solid #444;background:transparent;color:#aaa;border-radius:18px;padding:7px 10px;font-size:11px}
+.queue-toggle.active{color:var(--green);border-color:var(--green)}
+@media(max-width:750px){.queue-panel{margin:14px 0 18px;padding:12px}.queue-item{flex-wrap:wrap}.queue-item .queue-actions{margin-left:auto}}
 .empty-state {
   text-align: center;
   padding: 65px 20px;
@@ -495,8 +506,8 @@ input[type=file] { display: none; }
   .section-heading h2 { font-size: 19px; }
 
   .song-row td { padding: 10px 5px; }
-  .song-row td:nth-last-child(-n+2) { display: none; }
-  .song-list th:nth-last-child(-n+2) { display: none; }
+  .song-row td:nth-last-child(2) { display: none; }
+  .song-list th:nth-last-child(2) { display: none; }
 
   .player {
     grid-column: 1;
@@ -618,6 +629,11 @@ input[type=file] { display: none; }
       <select id="playlistSelect" aria-label="Choose playlist" style="background:#222;color:white;border:1px solid #444;border-radius:20px;padding:9px 12px;max-width:100%"></select>
     </div>
 
+    <section class="queue-panel" id="queuePanel" aria-label="Playback queue">
+      <div class="queue-panel-head"><h3>♫ Up Next <span id="queueCount" style="color:#aaa;font-size:12px;font-weight:400">(0)</span></h3>
+        <div class="queue-actions"><button class="queue-action" id="clearQueueBtn">Clear queue</button></div></div>
+      <div id="queueList"><div class="queue-empty">Your queue is empty. Add songs using the + button in your library.</div></div>
+    </section>
     <table class="song-list">
       <thead>
         <tr>
@@ -626,6 +642,7 @@ input[type=file] { display: none; }
           <th>FOLDER</th>
           <th>♥</th>
           <th>＋</th>
+          <th>QUEUE</th>
         </tr>
       </thead>
       <tbody id="trackList"></tbody>
@@ -654,6 +671,7 @@ input[type=file] { display: none; }
         <button class="ctrl" id="prevBtn" title="Previous">⏮</button>
         <button class="play-btn" id="playPauseBtn">▶</button>
         <button class="ctrl" id="nextBtn" title="Next">⏭</button>
+        <button class="queue-toggle" id="queueToggleBtn" title="Show playback queue" aria-expanded="false">☷ Queue</button>
       </div>
 
       <div class="progress">
@@ -747,6 +765,7 @@ const quickCards = document.getElementById('quickCards');
 let songs = [];
 let currentIndex = -1;
 let isShuffle = false;
+let playbackQueue = [];
 let currentView = 'home';
 // Favorites are saved in this browser so they remain after refreshes.
 let favorites;
@@ -1042,13 +1061,76 @@ function renderPlaylist() {
     };
     playlistCell.appendChild(addPlaylistBtn);
 
-    tr.append(number, infoCell, folderCell, favoriteCell, playlistCell);
+    const queueCell = document.createElement('td');
+    const queueBtn = document.createElement('button');
+    queueBtn.className = 'favorite-btn';
+    queueBtn.textContent = '＋';
+    queueBtn.title = 'Add to playback queue';
+    queueBtn.onclick = event => { event.stopPropagation(); addToQueue(songId); };
+    queueCell.appendChild(queueBtn);
+    tr.append(number, infoCell, folderCell, favoriteCell, playlistCell, queueCell);
 
     tr.onclick = () => loadSong(index, true);
 
     trackList.appendChild(tr);
   });
 }
+
+// ========================================
+// SMART PLAYBACK QUEUE
+// ========================================
+const queuePanel = document.getElementById('queuePanel');
+const queueList = document.getElementById('queueList');
+const queueCount = document.getElementById('queueCount');
+const queueToggleBtn = document.getElementById('queueToggleBtn');
+
+function addToQueue(songId, playNext = false) {
+  if (!songs.some(song => getSongId(song) === songId)) return;
+  if (playbackQueue.includes(songId)) { alert('That song is already in the queue.'); return; }
+  if (playNext) playbackQueue.unshift(songId);
+  else playbackQueue.push(songId);
+  renderQueue();
+}
+
+function renderQueue() {
+  if (!queueList) return;
+  queueCount.textContent = `(${playbackQueue.length})`;
+  queueList.replaceChildren();
+  if (!playbackQueue.length) {
+    const empty = document.createElement('div');
+    empty.className = 'queue-empty';
+    empty.textContent = 'Your queue is empty. Add songs using the + button in your library.';
+    queueList.appendChild(empty);
+    return;
+  }
+  playbackQueue.forEach((songId, position) => {
+    const song = songs.find(item => getSongId(item) === songId);
+    if (!song) return;
+    const item = document.createElement('div'); item.className = 'queue-item';
+    const number = document.createElement('span'); number.style.color='#888'; number.style.fontSize='11px'; number.textContent=`${position+1}.`;
+    const details = document.createElement('div'); details.className='queue-item-name';
+    const name=document.createElement('div'); name.textContent=cleanName(song.name);
+    const sub=document.createElement('div'); sub.className='queue-item-sub'; sub.textContent=getFolder(song);
+    details.append(name,sub);
+    const actions=document.createElement('div'); actions.className='queue-actions';
+    const makeButton=(label,handler,disabled=false)=>{const b=document.createElement('button');b.className='queue-action';b.textContent=label;b.disabled=disabled;b.onclick=handler;return b;};
+    actions.append(
+      makeButton('Play next',()=>{playbackQueue.splice(position,1);playbackQueue.unshift(songId);renderQueue();}),
+      makeButton('↑',()=>{[playbackQueue[position-1],playbackQueue[position]]=[playbackQueue[position],playbackQueue[position-1]];renderQueue();},position===0),
+      makeButton('↓',()=>{[playbackQueue[position+1],playbackQueue[position]]=[playbackQueue[position],playbackQueue[position+1]];renderQueue();},position===playbackQueue.length-1),
+      makeButton('Play',()=>{const i=songs.findIndex(item=>getSongId(item)===songId);playbackQueue.splice(position,1);renderQueue();loadSong(i,true);}),
+      makeButton('Remove',()=>{playbackQueue.splice(position,1);renderQueue();})
+    );
+    item.append(number,details,actions); queueList.appendChild(item);
+  });
+}
+queueToggleBtn.addEventListener('click',()=>{
+  const open=queuePanel.classList.toggle('open');
+  queueToggleBtn.classList.toggle('active',open);
+  queueToggleBtn.setAttribute('aria-expanded',String(open));
+});
+document.getElementById('clearQueueBtn').addEventListener('click',()=>{playbackQueue=[];renderQueue();});
+renderQueue();
 
 // Play a song
 function loadSong(index, autoPlay) {
@@ -1096,17 +1178,22 @@ audio.addEventListener('pause', () => {
 // Next song
 function nextSong() {
   if (songs.length === 0) return;
-
+  while (playbackQueue.length) {
+    const queuedId = playbackQueue.shift();
+    const queuedIndex = songs.findIndex(song => getSongId(song) === queuedId);
+    if (queuedIndex !== -1) {
+      renderQueue();
+      loadSong(queuedIndex, true);
+      return;
+    }
+  }
   let nextIndex;
-
   if (isShuffle && songs.length > 1) {
-    do {
-      nextIndex = Math.floor(Math.random() * songs.length);
-    } while (nextIndex === currentIndex);
+    do { nextIndex = Math.floor(Math.random() * songs.length); }
+    while (nextIndex === currentIndex);
   } else {
     nextIndex = (currentIndex + 1) % songs.length;
   }
-
   loadSong(nextIndex, true);
 }
 
