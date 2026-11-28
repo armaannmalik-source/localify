@@ -571,6 +571,31 @@ input[type=file] { display: none; }
 .eq-toggle.active{color:var(--green);border-color:var(--green)}
 @media(max-width:750px){.eq-panel{padding:12px;margin-bottom:16px}.eq-bands{gap:7px}.eq-band label{font-size:10px}.eq-head h3{font-size:14px}}
 
+
+/* Compact floating mini player */
+.mini-player-toggle{border:1px solid #444;background:#252525;color:#eee;border-radius:18px;width:30px;height:30px;font-size:18px;line-height:1}
+.mini-player-toggle:hover{border-color:var(--green);color:var(--green)}
+body.mini-player .app{grid-template-rows:1fr 0px}
+body.mini-player .player{position:fixed;right:14px;bottom:14px;width:min(370px,calc(100vw - 28px));height:auto;min-height:66px;grid-column:auto;grid-template-columns:minmax(0,1fr) auto;padding:9px 12px;gap:10px;box-shadow:0 8px 35px rgba(0,0,0,.55);border:1px solid #3a3a3a}
+body.mini-player .player-art{width:44px;height:44px}
+body.mini-player .track-folder{display:none}
+body.mini-player .player-center{display:block}
+body.mini-player .player-center .progress,
+body.mini-player #shuffleBtn,
+body.mini-player #prevBtn,
+body.mini-player #nextBtn,
+body.mini-player #queueToggleBtn,
+body.mini-player #eqToggleBtn,
+body.mini-player .player-right .volume-icon,
+body.mini-player #volumeBar{display:none}
+body.mini-player .controls{gap:0}
+body.mini-player .player-right{display:flex;gap:0}
+body.mini-player .mini-player-toggle{transform:rotate(180deg)}
+@media(max-width:750px){
+  body.mini-player .app{grid-template-rows:1fr 0px 55px}
+  body.mini-player .player{bottom:66px;right:10px;width:min(340px,calc(100vw - 20px));border-radius:12px}
+}
+
 </style>
 <script src="https://cdn.jsdelivr.net/npm/jsmediatags@3.9.7/dist/jsmediatags.min.js"></script>
 </head>
@@ -719,8 +744,9 @@ input[type=file] { display: none; }
     </div>
 
     <div class="player-right">
-      <span>🔊</span>
+      <span class="volume-icon">🔊</span>
       <input type="range" id="volumeBar" min="0" max="1" step="0.01" value="1">
+      <button class="mini-player-toggle" id="miniPlayerToggle" type="button" title="Minimize player" aria-label="Minimize player">⌄</button>
     </div>
   </footer>
 
@@ -784,6 +810,13 @@ const shuffleBtn = document.getElementById('shuffleBtn');
 
 const seekBar = document.getElementById('seekBar');
 const volumeBar = document.getElementById('volumeBar');
+const miniPlayerToggle = document.getElementById('miniPlayerToggle');
+miniPlayerToggle.addEventListener('click', () => {
+  const minimized = document.body.classList.toggle('mini-player');
+  miniPlayerToggle.textContent = minimized ? '⌃' : '⌄';
+  miniPlayerToggle.title = minimized ? 'Expand player' : 'Minimize player';
+  miniPlayerToggle.setAttribute('aria-label', miniPlayerToggle.title);
+});
 
 const currentTitle = document.getElementById('currentTitle');
 const currentFolder = document.getElementById('currentFolder');
@@ -1447,7 +1480,7 @@ function changeView(view) {
     pageSubtitle.textContent = 'The songs you love.';
     listHeading.textContent = 'Favorite Songs';
     quickCards.style.display = 'none';
-  } else {
+  } else if (view === 'playlists') {
     pageTitle.textContent = 'Your Playlists';
     pageSubtitle.textContent = 'Your collections, saved in this browser.';
     listHeading.textContent = 'Playlist Songs';
