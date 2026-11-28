@@ -1288,62 +1288,90 @@ try {
   if (savedLyrics && typeof savedLyrics === 'object' && !Array.isArray(savedLyrics)) lyricsBySong = savedLyrics;
 } catch (error) { console.warn('Could not load saved lyrics:', error); }
 let renderedLyricLines = [];
+let activeLyricIndex = -1;
 function currentLyricsId() {
   return currentIndex >= 0 && songs[currentIndex] ? getSongId(songs[currentIndex]) : null;
 }
+// Defensive LRC parser: ignores metadata tags, supports multiple timestamps,
+// normalizes decimal fractions, and caps input to avoid freezing on malformed files.
 function parseLyrics(raw) {
-  const lines = [];
-  const pattern = /\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?\]/g;
-  String(raw || '').split(/\r?\n/).forEach((line, originalIndex) => {
-    let match, found = false;
-    while ((match = pattern.exec(line)) !== null) {
-      found = true;
-      const fraction = match[3] ? Number('0.' + match[3]) : 0;
-      lines.push({time: Number(match[1]) * 60 + Number(match[2]) + fraction, text: line.replace(pattern, '').trim(), originalIndex});
+  const result = [];
+  const source = String(raw || '').replace(/^\uFEFF/, '').slice(0, 500000);
+  const timestampPattern = /\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]/g;
+  const metadataPattern = /^\[(?:ar|ti|al|by|re|ve|length|offset):.*\]$/i;
+  source.split(/\r?\n/).slice(0, 5000).forEach((line, originalIndex) => {
+    const trimmed = line.trim();
+    if (!trimmed || metadataPattern.test(trimmed)) return;
+    const times = [];
+    let match;
+    timestampPattern.lastIndex = 0;
+    while ((match = timestampPattern.exec(line)) !== null) {
+      const fractionText = match[3] || '';
+      const fraction = fractionText ? Number('0.' + fractionText) : 0;
+      const time = Number(match[1]) * 60 + Number(match[2]) + fraction;
+      if (Number.isFinite(time)) times.push(time);
     }
-    pattern.lastIndex = 0;
-    if (!found) lines.push({time: null, text: line, originalIndex});
+    const text = line.replace(timestampPattern, '').trim();
+    timestampPattern.lastIndex = 0;
+    if (times.length) {
+      times.forEach(time => result.push({time, text, originalIndex}));
+    } else {
+      result.push({time: null, text: line, originalIndex});
+    }
   });
-  return lines;
+  // LRC files can list repeated timestamps out of order; sort for reliable highlighting.
+  result.sort((a, b) => {
+    if (a.time === null) return b.time === null ? a.originalIndex - b.originalIndex : 1;
+    if (b.time === null) return -1;
+    return a.time - b.time || a.originalIndex - b.originalIndex;
+  });
+  return result;
 }
 function renderCurrentLyrics() {
   const id = currentLyricsId();
   const song = id ? songs[currentIndex] : null;
   lyricsCurrentTitle.textContent = song ? cleanName(song.name) : 'Choose a song to view its lyrics';
-  lyricsDisplay.innerHTML = '';
+  lyricsDisplay.textContent = '';
   renderedLyricLines = [];
+  activeLyricIndex = -1;
   const raw = id ? String(lyricsBySong[id] || '') : '';
   if (!raw.trim()) {
     const empty = document.createElement('div');
     empty.className = 'lyrics-empty';
     empty.textContent = song ? 'No lyrics saved for this song yet. Select Edit lyrics to add them.' : 'Load your music folder and select a song first.';
     lyricsDisplay.appendChild(empty);
+    lyricsDisplay.dataset.timed = 'false';
     return;
   }
   const parsed = parseLyrics(raw);
   const hasTimedLines = parsed.some(line => line.time !== null);
+  const fragment = document.createDocumentFragment();
   parsed.forEach(line => {
     const div = document.createElement('div');
     div.className = 'lyrics-line';
     div.textContent = line.text || ' ';
-    lyricsDisplay.appendChild(div);
+    fragment.appendChild(div);
     renderedLyricLines.push({element: div, time: line.time});
   });
+  lyricsDisplay.appendChild(fragment);
   lyricsDisplay.dataset.timed = hasTimedLines ? 'true' : 'false';
   updateActiveLyric();
 }
 function updateActiveLyric() {
   if (!lyricsPanel.classList.contains('open') || lyricsDisplay.dataset.timed !== 'true' || !renderedLyricLines.length) return;
-  let active = -1;
+  let nextActive = -1;
   for (let i = 0; i < renderedLyricLines.length; i++) {
     const time = renderedLyricLines[i].time;
-    if (time !== null && time <= audio.currentTime) active = i;
+    if (time !== null && time <= audio.currentTime) nextActive = i;
+    if (time !== null && time > audio.currentTime) break;
   }
-  renderedLyricLines.forEach((line, i) => {
-    const isActive = i === active;
-    line.element.classList.toggle('active', isActive);
-    if (isActive) line.element.scrollIntoView({block: 'nearest', behavior: 'smooth'});
-  });
+  if (nextActive === activeLyricIndex) return;
+  activeLyricIndex = nextActive;
+  renderedLyricLines.forEach((line, i) => line.element.classList.toggle('active', i === activeLyricIndex));
+  // Scroll only when the active line changes, not on every audio timeupdate.
+  if (activeLyricIndex >= 0) {
+    renderedLyricLines[activeLyricIndex].element.scrollIntoView({block: 'nearest', behavior: 'auto'});
+  }
 }
 function openLyricsPanel() {
   const open = lyricsPanel.classList.toggle('open');
@@ -1365,6 +1393,7 @@ document.getElementById('saveLyricsBtn').addEventListener('click', () => {
   const id = currentLyricsId();
   if (!id) { lyricsStatus.textContent = 'Choose a song first.'; return; }
   const value = lyricsInput.value;
+  if (value.length > 500000) { lyricsStatus.textContent = 'Lyrics are too large. Please keep them under 500 KB.'; return; }
   if (value.trim()) lyricsBySong[id] = value; else delete lyricsBySong[id];
   try {
     localStorage.setItem('localify_lyrics', JSON.stringify(lyricsBySong));
