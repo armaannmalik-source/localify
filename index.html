@@ -596,6 +596,23 @@ body.mini-player .mini-player-toggle{transform:rotate(180deg)}
   body.mini-player .player{bottom:66px;right:10px;width:min(340px,calc(100vw - 20px));border-radius:12px}
 }
 
+
+
+/* Local lyrics viewer */
+.lyrics-panel{display:none;background:rgba(0,0,0,.32);border:1px solid #383838;border-radius:12px;padding:16px;margin:0 0 22px}
+.lyrics-panel.open{display:block}.lyrics-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.lyrics-head h3{font-size:16px}.lyrics-actions{display:flex;gap:8px;flex-wrap:wrap}
+.lyrics-actions button,.lyrics-editor button{background:#252525;color:#eee;border:1px solid #444;border-radius:18px;padding:8px 12px;font-size:12px;cursor:pointer}
+.lyrics-actions button:hover,.lyrics-editor button:hover{border-color:var(--green);color:var(--green)}
+.lyrics-current-title{font-size:12px;color:var(--muted);margin-bottom:12px}
+.lyrics-display{min-height:130px;max-height:310px;overflow:auto;text-align:center;padding:14px 8px;line-height:1.9;white-space:pre-wrap;color:#bbb;font-size:15px;scroll-behavior:smooth}
+.lyrics-line{padding:3px 0;transition:color .15s,transform .15s}.lyrics-line.active{color:var(--green);font-weight:700;transform:scale(1.025)}
+.lyrics-empty{color:var(--muted);font-size:13px;line-height:1.7}
+.lyrics-editor{display:none;margin-top:12px}.lyrics-editor.open{display:block}.lyrics-editor textarea{width:100%;min-height:145px;resize:vertical;background:#171717;color:#eee;border:1px solid #444;border-radius:9px;padding:12px;font:13px/1.6 inherit;outline:none}.lyrics-editor textarea:focus{border-color:var(--green)}
+.lyrics-help{font-size:11px;color:var(--muted);line-height:1.5;margin:8px 0 10px}.lyrics-status{font-size:11px;color:var(--green);margin-left:8px}
+@media(max-width:750px){.lyrics-panel{padding:12px}.lyrics-display{font-size:14px;max-height:260px}}
+body.mini-player #lyricsToggleBtn{display:none}
+
 </style>
 <script src="https://cdn.jsdelivr.net/npm/jsmediatags@3.9.7/dist/jsmediatags.min.js"></script>
 </head>
@@ -690,6 +707,27 @@ body.mini-player .mini-player-toggle{transform:rotate(180deg)}
       <p class="eq-note" id="eqStatus">Equalizer is off. Enable it to shape the sound. Audio processing starts after you press Enable EQ.</p>
     </section>
 
+    <section class="lyrics-panel" id="lyricsPanel" aria-label="Lyrics viewer">
+      <div class="lyrics-head">
+        <h3>♫ Lyrics</h3>
+        <div class="lyrics-actions">
+          <button id="editLyricsBtn" type="button">Edit lyrics</button>
+          <button id="closeLyricsBtn" type="button">Close</button>
+        </div>
+      </div>
+      <div class="lyrics-current-title" id="lyricsCurrentTitle">Choose a song to view its lyrics</div>
+      <div class="lyrics-display" id="lyricsDisplay"><div class="lyrics-empty">Add lyrics for your songs using Edit lyrics. Lyrics stay saved in this browser.</div></div>
+      <div class="lyrics-editor" id="lyricsEditor">
+        <textarea id="lyricsInput" spellcheck="false" placeholder="Paste lyrics here. For synchronized lyrics, use LRC timestamps, for example:
+[00:12.00]First line
+[00:16.50]Second line"></textarea>
+        <p class="lyrics-help">Plain text lyrics are displayed as-is. LRC timestamps (like [00:12.00]) let Localify highlight each line while the song plays. Lyrics are stored locally in this browser.</p>
+        <button id="saveLyricsBtn" type="button">Save lyrics</button>
+        <button id="cancelLyricsBtn" type="button">Cancel</button>
+        <span class="lyrics-status" id="lyricsStatus" aria-live="polite"></span>
+      </div>
+    </section>
+
     <section class="queue-panel" id="queuePanel" aria-label="Playback queue">
       <div class="queue-panel-head"><h3>♫ Up Next <span id="queueCount" style="color:#aaa;font-size:12px;font-weight:400">(0)</span></h3>
         <div class="queue-actions"><button class="queue-action" id="clearQueueBtn">Clear queue</button></div></div>
@@ -734,6 +772,7 @@ body.mini-player .mini-player-toggle{transform:rotate(180deg)}
         <button class="ctrl" id="nextBtn" title="Next">⏭</button>
         <button class="queue-toggle" id="queueToggleBtn" title="Show playback queue" aria-expanded="false">☷ Queue</button>
         <button class="eq-toggle" id="eqToggleBtn" title="Open audio equalizer" aria-expanded="false">♫ EQ</button>
+        <button class="eq-toggle" id="lyricsToggleBtn" title="Open lyrics" aria-expanded="false">♫ Lyrics</button>
       </div>
 
       <div class="progress">
@@ -1221,6 +1260,10 @@ function loadSong(index, autoPlay) {
   setArtworkForSong(song, playerArt);
 
   renderPlaylist();
+  if (lyricsPanel.classList.contains('open')) {
+    lyricsEditor.classList.remove('open');
+    renderCurrentLyrics();
+  }
 
   if (autoPlay) {
     audio.play().catch(error => {
@@ -1228,6 +1271,112 @@ function loadSong(index, autoPlay) {
     });
   }
 }
+
+// ========================================
+// LYRICS VIEWER (manual lyrics + timed LRC)
+// ========================================
+const lyricsPanel = document.getElementById('lyricsPanel');
+const lyricsToggleBtn = document.getElementById('lyricsToggleBtn');
+const lyricsDisplay = document.getElementById('lyricsDisplay');
+const lyricsCurrentTitle = document.getElementById('lyricsCurrentTitle');
+const lyricsEditor = document.getElementById('lyricsEditor');
+const lyricsInput = document.getElementById('lyricsInput');
+const lyricsStatus = document.getElementById('lyricsStatus');
+let lyricsBySong = {};
+try {
+  const savedLyrics = JSON.parse(localStorage.getItem('localify_lyrics') || '{}');
+  if (savedLyrics && typeof savedLyrics === 'object' && !Array.isArray(savedLyrics)) lyricsBySong = savedLyrics;
+} catch (error) { console.warn('Could not load saved lyrics:', error); }
+let renderedLyricLines = [];
+function currentLyricsId() {
+  return currentIndex >= 0 && songs[currentIndex] ? getSongId(songs[currentIndex]) : null;
+}
+function parseLyrics(raw) {
+  const lines = [];
+  const pattern = /\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?\]/g;
+  String(raw || '').split(/\r?\n/).forEach((line, originalIndex) => {
+    let match, found = false;
+    while ((match = pattern.exec(line)) !== null) {
+      found = true;
+      const fraction = match[3] ? Number('0.' + match[3]) : 0;
+      lines.push({time: Number(match[1]) * 60 + Number(match[2]) + fraction, text: line.replace(pattern, '').trim(), originalIndex});
+    }
+    pattern.lastIndex = 0;
+    if (!found) lines.push({time: null, text: line, originalIndex});
+  });
+  return lines;
+}
+function renderCurrentLyrics() {
+  const id = currentLyricsId();
+  const song = id ? songs[currentIndex] : null;
+  lyricsCurrentTitle.textContent = song ? cleanName(song.name) : 'Choose a song to view its lyrics';
+  lyricsDisplay.innerHTML = '';
+  renderedLyricLines = [];
+  const raw = id ? String(lyricsBySong[id] || '') : '';
+  if (!raw.trim()) {
+    const empty = document.createElement('div');
+    empty.className = 'lyrics-empty';
+    empty.textContent = song ? 'No lyrics saved for this song yet. Select Edit lyrics to add them.' : 'Load your music folder and select a song first.';
+    lyricsDisplay.appendChild(empty);
+    return;
+  }
+  const parsed = parseLyrics(raw);
+  const hasTimedLines = parsed.some(line => line.time !== null);
+  parsed.forEach(line => {
+    const div = document.createElement('div');
+    div.className = 'lyrics-line';
+    div.textContent = line.text || ' ';
+    lyricsDisplay.appendChild(div);
+    renderedLyricLines.push({element: div, time: line.time});
+  });
+  lyricsDisplay.dataset.timed = hasTimedLines ? 'true' : 'false';
+  updateActiveLyric();
+}
+function updateActiveLyric() {
+  if (!lyricsPanel.classList.contains('open') || lyricsDisplay.dataset.timed !== 'true' || !renderedLyricLines.length) return;
+  let active = -1;
+  for (let i = 0; i < renderedLyricLines.length; i++) {
+    const time = renderedLyricLines[i].time;
+    if (time !== null && time <= audio.currentTime) active = i;
+  }
+  renderedLyricLines.forEach((line, i) => {
+    const isActive = i === active;
+    line.element.classList.toggle('active', isActive);
+    if (isActive) line.element.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+  });
+}
+function openLyricsPanel() {
+  const open = lyricsPanel.classList.toggle('open');
+  lyricsToggleBtn.classList.toggle('active', open);
+  lyricsToggleBtn.setAttribute('aria-expanded', String(open));
+  if (open) renderCurrentLyrics();
+}
+lyricsToggleBtn.addEventListener('click', openLyricsPanel);
+document.getElementById('closeLyricsBtn').addEventListener('click', () => {
+  lyricsPanel.classList.remove('open'); lyricsToggleBtn.classList.remove('active'); lyricsToggleBtn.setAttribute('aria-expanded', 'false');
+});
+document.getElementById('editLyricsBtn').addEventListener('click', () => {
+  if (!currentLyricsId()) { lyricsStatus.textContent = 'Choose a song first.'; return; }
+  lyricsInput.value = lyricsBySong[currentLyricsId()] || '';
+  lyricsEditor.classList.add('open'); lyricsStatus.textContent = '';
+});
+document.getElementById('cancelLyricsBtn').addEventListener('click', () => { lyricsEditor.classList.remove('open'); lyricsStatus.textContent = ''; });
+document.getElementById('saveLyricsBtn').addEventListener('click', () => {
+  const id = currentLyricsId();
+  if (!id) { lyricsStatus.textContent = 'Choose a song first.'; return; }
+  const value = lyricsInput.value;
+  if (value.trim()) lyricsBySong[id] = value; else delete lyricsBySong[id];
+  try {
+    localStorage.setItem('localify_lyrics', JSON.stringify(lyricsBySong));
+    lyricsEditor.classList.remove('open');
+    lyricsStatus.textContent = 'Saved on this device.';
+    renderCurrentLyrics();
+  } catch (error) {
+    lyricsStatus.textContent = 'Could not save. Browser storage may be full.';
+    console.error('Could not save lyrics:', error);
+  }
+});
+audio.addEventListener('timeupdate', updateActiveLyric);
 
 // Play / pause
 playPauseBtn.onclick = function() {
